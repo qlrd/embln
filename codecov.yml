@@ -1,0 +1,26 @@
+coverage:
+  status:
+    project:
+      default:
+        # Whole-project floor: aim for 95% total coverage; tolerate up to a
+        # 5% drop on any given PR before failing the status check.
+        target: 95%
+        threshold: 5%
+    patch:
+      default:
+        # New / changed lines aim for 95% with the same 5% slack.
+        target: 95%
+        threshold: 5%
+
+# Don't count submodules, the bitcoind build tree, or the cached venv toward
+# coverage totals — there's no project code there.
+ignore:
+  - "vendor/**"
+  - "build/**"
+  - ".venv/**"
+  - "tests/**"
+
+comment:
+  layout: "reach,diff,flags,files"
+  behavior: default
+  require_changes: false
