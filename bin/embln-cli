@@ -1,0 +1,10 @@
+#!/usr/bin/env python
+"""Wrapper around src.bin.embln_cli so `./bin/embln-cli ...` works standalone."""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src.bin.embln_cli import main  # noqa: E402
+
+sys.exit(main())
