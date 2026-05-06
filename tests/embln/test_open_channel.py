@@ -1,3 +1,5 @@
+import pytest
+
 from src.lightning.messages import (
     ACCEPT_CHANNEL_TYPE,
     OPEN_CHANNEL_TYPE,
@@ -105,3 +107,35 @@ def test_open_channel_handshake_over_socket(make_ln_node, logger):
     assert accept["minimum_depth"] == 3
     assert accept["temporary_channel_id"] in alice.handshakes
     assert alice.handshakes[accept["temporary_channel_id"]] == accept
+
+
+def test_open_channel_rejects_push_msat_exceeds_funding(make_ln_node):
+    """BOLT 2: push_msat MUST NOT exceed funding_satoshis * 1000."""
+    alice = make_ln_node("alice")
+    with pytest.raises(ValueError, match="push_msat"):
+        alice.create_open_channel_msg(
+            funding_satoshis=100_000, push_msat=100_001_000 + 1
+        )
+
+
+def test_open_channel_rejects_max_accepted_htlcs_over_483(make_ln_node):
+    """BOLT 2: max_accepted_htlcs MUST NOT exceed 483."""
+    alice = make_ln_node("alice")
+    with pytest.raises(ValueError, match="max_accepted_htlcs"):
+        alice.create_open_channel_msg(max_accepted_htlcs=484)
+
+
+def test_open_channel_rejects_channel_reserve_below_dust_limit(make_ln_node):
+    """BOLT 2: channel_reserve_satoshis MUST be >= dust_limit_satoshis."""
+    alice = make_ln_node("alice")
+    with pytest.raises(ValueError, match="channel_reserve_satoshis"):
+        alice.create_open_channel_msg(
+            dust_limit_satoshis=1000, channel_reserve_satoshis=999
+        )
+
+
+def test_open_channel_rejects_feerate_below_minimum(make_ln_node):
+    """BOLT 3: feerate_per_kw MUST be >= 253 (minimum relay feerate)."""
+    alice = make_ln_node("alice")
+    with pytest.raises(ValueError, match="feerate_per_kw"):
+        alice.create_open_channel_msg(feerate_per_kw=252)

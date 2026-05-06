@@ -54,6 +54,27 @@ def build_open_channel(  # pylint: disable=too-many-arguments,too-many-positiona
     if channel_reserve_satoshis is None:
         channel_reserve_satoshis = max(funding_satoshis // 100, dust_limit_satoshis)
 
+    # BOLT 2 sender requirements
+    if push_msat > funding_satoshis * 1000:
+        raise ValueError(
+            "push_msat (%d) MUST NOT exceed funding_satoshis * 1000 (%d)"
+            % (push_msat, funding_satoshis * 1000)
+        )
+    if max_accepted_htlcs > 483:
+        raise ValueError(
+            "max_accepted_htlcs (%d) MUST NOT exceed 483" % max_accepted_htlcs
+        )
+    if channel_reserve_satoshis < dust_limit_satoshis:
+        raise ValueError(
+            "channel_reserve_satoshis (%d) MUST be >= dust_limit_satoshis (%d)"
+            % (channel_reserve_satoshis, dust_limit_satoshis)
+        )
+    if feerate_per_kw < 253:
+        raise ValueError(
+            "feerate_per_kw (%d) MUST be >= 253 (BOLT 3 minimum relay feerate)"
+            % feerate_per_kw
+        )
+
     body = (
         chain_hash
         + temporary_channel_id

@@ -102,7 +102,7 @@ class LightningNode:  # pylint: disable=too-many-instance-attributes
             "push_msat": 0,
             "dust_limit_satoshis": 546,
             "htlc_minimum_msat": 1000,
-            "feerate_per_kw": 250,
+            "feerate_per_kw": 253,
             "to_self_delay": 144,
             "max_accepted_htlcs": 483,
             "channel_flags": 0,
