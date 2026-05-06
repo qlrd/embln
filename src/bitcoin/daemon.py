@@ -171,6 +171,12 @@ class Daemon:
         assert self.rpc.getbalance(wallet="") > 0
 
     def mine(self, n=1):
+        # _address is lazily resolved: create the default wallet on first use so
+        # callers can invoke mine() independently without calling get_coins() first.
+        if self._address is None:
+            if "" not in self.rpc.listwallets():
+                self.rpc.createwallet("")
+            self._address = self.rpc.getnewaddress(wallet="")
         self.rpc.generatetoaddress(n, self._address)
 
     def stop(self):
