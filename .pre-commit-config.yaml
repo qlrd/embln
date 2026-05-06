@@ -1,0 +1,65 @@
+exclude: '^(vendor/|build/)'
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.29.4
+    hooks:
+      - id: typos
+        args: []
+
+  - repo: local
+    hooks:
+      - id: isort
+        name: isort
+        entry: uv run poe isort --check
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: format
+        name: format
+        entry: uv run poe format --check
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: pylint
+        name: pylint
+        entry: uv run poe pylint
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: build-core
+        name: build-core
+        entry: uv run poe build-core
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: tests
+        name: tests
+        entry: uv run poe tests
+        language: system
+        pass_filenames: false
+        always_run: true

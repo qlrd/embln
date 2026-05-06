@@ -1,0 +1,147 @@
+[project]
+name = "embln"
+version = "0.1.0"
+description = "Embit powered ln and bitcoin-core"
+authors = [
+    {name = "qlrd", email = "qlrddev@gmail.com"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">3.10,<=3.14.4"
+dependencies = [
+    "requests>=2.33.1",
+    "embit",
+    "pytest-cov>=7.1.0",
+]
+
+[tool.uv.sources]
+embit = { path = "vendor/embit", editable = true }
+
+[dependency-groups]
+dev = [
+    "poethepoet>=0.45.0",
+    "pytest>=9.0.3",
+    "ruff>=0.9.0",
+    "pylint>=3.3.0",
+    "isort>=5.13.0",
+    "pre-commit>=3.7.0",
+]
+
+[tool.poe.tasks.build-core]
+help = "Build a Bitcoin Core release from source into ./build/ (override version with BITCOIN_REVISION)"
+shell = '''
+set -e
+BITCOIN_REV="${BITCOIN_REVISION:-31.0}"
+BITCOIN_REV="${BITCOIN_REV#v}"
+WANTED_TAG="v${BITCOIN_REV}"
+DEST="${POE_ROOT}/build"
+mkdir -p "$DEST"
+
+NEED_CLONE=1
+if [ -d "$DEST/bitcoin/.git" ]; then
+    CURRENT=$(git -C "$DEST/bitcoin" describe --tags --exact-match 2>/dev/null || echo "")
+    if [ "$CURRENT" = "$WANTED_TAG" ]; then
+        NEED_CLONE=0
+    fi
+fi
+
+if [ "$NEED_CLONE" = 1 ]; then
+    rm -rf "$DEST/bitcoin"
+    git clone --depth 1 --branch "$WANTED_TAG" https://github.com/bitcoin/bitcoin "$DEST/bitcoin"
+fi
+
+if [ -x "$DEST/bin/bitcoind" ] && [ "$NEED_CLONE" = 0 ]; then
+    echo "bitcoind already built at $DEST/bin/bitcoind ($WANTED_TAG)"
+    exit 0
+fi
+
+cmake -S "$DEST/bitcoin" -B "$DEST/bitcoin/build" \
+    -DENABLE_IPC=OFF -DBUILD_CLI=OFF -DBUILD_TESTS=OFF \
+    -DENABLE_WALLET=ON -DCMAKE_BUILD_TYPE=MinSizeRel \
+    -DENABLE_EXTERNAL_SIGNER=OFF -DINSTALL_MAN=OFF
+cmake --build "$DEST/bitcoin/build" --target bitcoind \
+    -j "$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
+mkdir -p "$DEST/bin"
+cp -f "$DEST/bitcoin/build/bin/bitcoind" "$DEST/bin/bitcoind"
+echo "bitcoind ($WANTED_TAG) ready at $DEST/bin/bitcoind"
+'''
+
+[tool.poe.tasks.tests]
+cmd = "pytest ${_catch:+ -W error::${_catch}} ${_cov:+ --cache-clear --cov src --cov-report html --cov-report xml } tests/embln ${_verbose:+ --show-capture all --capture tee-sys} ${_cov:+ --cov-context=test --cov-report term-missing}"
+env = { EMBLN_BACKEND = "${POE_ROOT}/build/bin" }
+args = [
+    { name = "_verbose", options = ["-v", "--verbose"], type = "boolean" },
+    { name = "_cov", options = ["-c", "--coverage"], type = "boolean" },
+    { name = "_catch", options = ["--catch"], help = "Promote a warning class to error (e.g. ResourceWarning, DeprecationWarning)." },
+]
+
+
+[tool.poe.tasks.isort]
+help = "Sort imports (default). Pass --check to verify without modifying."
+shell = '''
+if [ -n "${_check:-}" ]; then
+    isort --check-only --diff src tests
+else
+    isort src tests
+fi
+'''
+args = [
+    { name = "_check", options = ["-c", "--check"], type = "boolean" },
+]
+
+[tool.poe.tasks.format]
+help = "Format with ruff (default). Pass --check to verify without modifying."
+shell = '''
+if [ -n "${_check:-}" ]; then
+    ruff format --check src tests
+else
+    ruff format src tests
+fi
+'''
+args = [
+    { name = "_check", options = ["-c", "--check"], type = "boolean" },
+]
+
+[tool.poe.tasks.pylint]
+help = "Run pylint over src/ and tests/."
+cmd = "pylint src tests"
+
+[tool.isort]
+profile = "black"
+
+[tool.pylint.MASTER]
+ignore-paths = ["vendor/.*", "build/.*"]
+
+[tool.pylint."MESSAGES CONTROL"]
+disable = [
+    # project convention: %s formatting (microcontroller-friendly via embit/micropython)
+    "consider-using-f-string",
+    # learning sandbox; obvious wrappers and __init__ files don't need docstrings
+    "missing-module-docstring",
+    "missing-function-docstring",
+    "missing-class-docstring",
+    # pytest fixtures legitimately shadow names; lazy fixture imports are intentional
+    "redefined-outer-name",
+    "import-outside-toplevel",
+    "too-few-public-methods",
+    "duplicate-code",
+    # accessing `_server_thread` in the test factory is intentional state probing
+    "protected-access",
+]
+
+[tool.pylint.DESIGN]
+# BOLT 2 mandatory-field message builders have ~13 kwargs (every policy
+# field exposed). LightningNode tracks alias, color_rgb, port, daemon,
+# channels, handshakes, _server_socket, _server_thread, _stop_event,
+# _logger, plus the two defaults dicts.
+max-args = 14
+max-positional-arguments = 14
+max-locals = 25
+max-attributes = 15
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+python_files = ["test_*.py", "*_test.py"]
+markers = [
+    "integration: tests that require a running bitcoind (EMBLN_BACKEND must be set)",
+]
