@@ -1,0 +1,97 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BITCOIN_REVISION: "31.0"
+
+jobs:
+  typos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crate-ci/typos@v1.29.4
+
+  isort:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: true }
+      - uses: astral-sh/setup-uv@v4
+        with: { enable-cache: true }
+      - run: uv sync --dev
+      - run: uv run poe isort --check
+
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: true }
+      - uses: astral-sh/setup-uv@v4
+        with: { enable-cache: true }
+      - run: uv sync --dev
+      - run: uv run poe format --check
+
+  pylint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: true }
+      - uses: astral-sh/setup-uv@v4
+        with: { enable-cache: true }
+      - run: uv sync --dev
+      - run: uv run poe pylint
+
+  conventional-commits:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: webiny/action-conventional-commits@v1.3.0
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: true }
+
+      - name: Install bitcoind build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config \
+            libboost-system-dev libboost-filesystem-dev \
+            libboost-test-dev libboost-thread-dev \
+            libssl-dev libevent-dev libsqlite3-dev
+
+      - uses: astral-sh/setup-uv@v4
+        with: { enable-cache: true }
+      - run: uv sync --dev
+
+      - name: Cache built bitcoind
+        id: cache-bitcoind
+        uses: actions/cache@v4
+        with:
+          path: build/bin/bitcoind
+          key: bitcoind-${{ runner.os }}-${{ runner.arch }}-${{ env.BITCOIN_REVISION }}
+
+      - name: Build bitcoind
+        if: steps.cache-bitcoind.outputs.cache-hit != 'true'
+        run: uv run poe build-core
+
+      - run: uv run poe tests --catch ResourceWarning --coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
