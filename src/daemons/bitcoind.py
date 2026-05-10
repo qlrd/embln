@@ -1,37 +1,35 @@
-import logging
+"""BitcoindDaemon — manages a bitcoind subprocess on regtest."""
+
 import os
 import shutil
 import signal
-import socket
 import subprocess
 import time
-import weakref
 
-from .rpc import Rpc
+from src.daemons.base import BaseDaemon
+from src.rpc.bitcoin import BitcoinRpc
 
 
-class Daemon:
+class BitcoindDaemon(BaseDaemon):
+    """Owns a `bitcoind` subprocess with its own datadir / rpcport / port."""
+
     rpcuser = "bitcoin"
     rpcpassword = "secret"
     retry_count = 30
     binary = "bitcoind"
-    # Defense-in-depth registry — every live instance is tracked weakly so a
-    # session-end atexit hook (or test teardown) can call stop_all_running()
-    # and reap any bitcoind that wasn't explicitly stopped (e.g. on Ctrl-C).
-    _instances: "weakref.WeakSet[Daemon]" = weakref.WeakSet()
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         name: str = "Bitcoin Core",
         datadir: str = None,
         rpcport: int = 18778,
         port: int = 18779,
     ):
+        super().__init__(name=name)
         backend = os.getenv("EMBLN_BACKEND")
         if not backend:
             raise RuntimeError("EMBLN_BACKEND environment variable must be set")
         self.basedir = os.path.abspath(backend)
-        self.name = name
         if datadir is None:
             raise ValueError("datadir is required (must differ across instances)")
         self.datadir = os.path.abspath(datadir)
@@ -40,19 +38,6 @@ class Daemon:
         self._rpc = None
         self._address = None
         self.proc = None
-        self._logger = None
-        type(self)._instances.add(self)
-
-    @classmethod
-    def stop_all_running(cls):
-        """Stop every live Daemon whose subprocess is still running. Safe to
-        call from atexit / session teardown to reap leaked bitcoind processes."""
-        for d in list(cls._instances):
-            if d.proc is not None and d.proc.poll() is None:
-                try:
-                    d.stop()
-                except Exception:  # pylint: disable=broad-exception-caught
-                    pass
 
     @property
     def cmd(self):
@@ -63,58 +48,46 @@ class Daemon:
         # is bitcoind itself.
         argv = " ".join(
             [
-                f"{self.basedir}/{self.binary}",
-                f"-datadir={self.datadir}",
+                "%s/%s" % (self.basedir, self.binary),
+                "-datadir=%s" % self.datadir,
                 "-regtest",
                 "-fallbackfee=0.0001",
-                f"-rpcuser={self.rpcuser}",
-                f"-rpcpassword={self.rpcpassword}",
-                f"-rpcport={self.rpcport}",
-                f"-port={self.port}",
+                "-rpcuser=%s" % self.rpcuser,
+                "-rpcpassword=%s" % self.rpcpassword,
+                "-rpcport=%s" % self.rpcport,
+                "-port=%s" % self.port,
             ]
         )
-        return f"ulimit -n 10240 && exec {argv}"
+        return "ulimit -n 10240 && exec %s" % argv
 
     @property
-    def rpc(self):
+    def rpc(self) -> BitcoinRpc:
         if self._rpc is None:
-            # name= makes Rpc log under a child of the daemon's logger
-            # ("alice.rpc"), so JSON-RPC traffic streams alongside daemon lifecycle.
-            self._rpc = Rpc(
-                self.rpcuser,
-                self.rpcpassword,
+            # name= lets BitcoinRpc log under a child of the daemon's logger
+            # ("alice.rpc"), so JSON-RPC traffic streams alongside lifecycle events.
+            self._rpc = BitcoinRpc(
+                user=self.rpcuser,
+                password=self.rpcpassword,
                 port=self.rpcport,
                 timeout=2,
-                name=f"{self.name}.rpc",
+                name="%s.rpc" % self.name,
             )
         return self._rpc
 
-    @property
-    def logger(self):
-        if self._logger is None:
-            self._logger = logging.getLogger(self.name)
-        return self._logger
-
-    @staticmethod
-    def _port_in_use(port: int) -> bool:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                s.bind(("127.0.0.1", port))
-                return False
-            except OSError:
-                return True
+    def is_running(self) -> bool:
+        return self.proc is not None and self.proc.poll() is None
 
     def start(self):
         for label, p in (("rpcport", self.rpcport), ("port", self.port)):
             if self._port_in_use(p):
                 raise RuntimeError(
-                    f"{self.name}: {label} {p} already in use — likely a stale "
-                    f"bitcoind. Try: pkill -f 'bitcoind.*-{label}={p}'"
+                    "%s: %s %s already in use — likely a stale "
+                    "bitcoind. Try: pkill -f 'bitcoind.*-%s=%s'"
+                    % (self.name, label, p, label, p)
                 )
 
-        print()
         self.logger.info(
-            f"Starting bitcoind (rpcport={self.rpcport}, datadir={self.datadir})"
+            "Starting bitcoind (rpcport=%s, datadir=%s)", self.rpcport, self.datadir
         )
         try:
             shutil.rmtree(self.datadir)
@@ -124,7 +97,7 @@ class Daemon:
         # DEVNULL (not PIPE): we never read bitcoind's stdout, and a PIPE that's
         # never drained leaks an open file object that surfaces as a
         # ResourceWarning if the test gets Ctrl-C'd before stop() runs.
-        self.proc = subprocess.Popen(
+        self.proc = subprocess.Popen(  # pylint: disable=consider-using-with
             self.cmd, stdout=subprocess.DEVNULL, shell=True, start_new_session=True
         )
 
@@ -132,7 +105,7 @@ class Daemon:
         for i in range(self.retry_count):
             time.sleep(1)
             try:
-                info = self.rpc.getblockchaininfo()
+                info = self.rpc.getblockchaininfo()  # pylint: disable=no-member
                 self._log_config(info)
                 return
             except Exception as e:  # pylint: disable=broad-exception-caught
@@ -165,16 +138,16 @@ class Daemon:
         self.logger.info("ready")
 
     def get_coins(self):
-        if "" not in self.rpc.listwallets():
-            self.rpc.createwallet("")
+        if "" not in self.rpc.listwallets():  # pylint: disable=no-member
+            self.rpc.createwallet("")  # pylint: disable=no-member
         self.mine(101)
-        assert self.rpc.getbalance(wallet="") > 0
+        assert self.rpc.getbalance(wallet="") > 0  # pylint: disable=no-member
 
-    def mine(self, n=1):
-        self.rpc.generatetoaddress(n, self._address)
+    def mine(self, n: int = 1):
+        self.rpc.generatetoaddress(n, self._address)  # pylint: disable=no-member
 
     def stop(self):
-        self.logger.info(f"Shutting down {self.name}")
+        self.logger.info("Shutting down %s", self.name)
         if self.proc is None:
             return
         os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)

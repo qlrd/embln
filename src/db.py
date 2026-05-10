@@ -93,6 +93,16 @@ class Db:
         )
         return [{"idx": r[0], "address": r[1], "used": bool(r[2])} for r in rows]
 
+    def delete_wallet(self, alias: str):
+        """Cascade-delete a wallet's record + all of its addresses + channels.
+        Used by `walletcreate(force=True)` so the daemon can recreate a
+        wallet from scratch without colliding with the previous mnemonic."""
+        self._conn.execute("DELETE FROM channels WHERE wallet=?", (alias,))
+        self._conn.execute("DELETE FROM addresses WHERE wallet=?", (alias,))
+        self._conn.execute("DELETE FROM wallets WHERE alias=?", (alias,))
+        self._conn.commit()
+        logger.warning("delete_wallet alias=%s (cascaded)", alias)
+
     def save_address(self, wallet: str, branch: int, idx: int, address: str):
         self._conn.execute(
             "INSERT OR IGNORE INTO addresses (wallet, branch, idx, address) "

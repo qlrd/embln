@@ -169,6 +169,30 @@ def add_log_level_args(p):
     )
 
 
+def default_emblnd_datadir(alias: str) -> str:
+    """Stable per-alias datadir used by emblnd / embln-cli at runtime.
+
+    Tests construct EmblndDaemon directly with explicit `datadir=`, so they
+    bypass this helper — keeping `EmblndDaemon._default_datadir` (PID-isolated)
+    intact for test fixtures."""
+    return os.path.join(os.path.expanduser("~/.embln"), alias)
+
+
+def resolve_datadir(args) -> str:
+    """`--datadir` (if the parser exposes it) > `EMBLN_DATADIR` env var
+    > `~/.embln/<alias>` (the default emblnd uses).
+
+    embln-cli does not expose `--datadir` to users — datadir comes from
+    `--alias` via the default convention or from `EMBLN_DATADIR` for
+    non-default locations (tests, multi-instance setups). emblnd still
+    accepts `--datadir` since the daemon is what actually picks the path."""
+    return (
+        getattr(args, "datadir", None)
+        or os.getenv("EMBLN_DATADIR")
+        or default_emblnd_datadir(args.alias)
+    )
+
+
 def resolve_db(args) -> str:
     return args.db or os.getenv("EMBLN_DB") or default_db_path()
 
@@ -190,3 +214,10 @@ def add_common_args(p):
     p.add_argument("--alias", required=True, help="wallet alias")
     p.add_argument("--password", help="wallet password (or env EMBLN_PASSWORD)")
     p.add_argument("--db", help="SQLite path (or env EMBLN_DB)")
+
+
+def add_datadir_arg(p):
+    p.add_argument(
+        "--datadir",
+        help="emblnd datadir (or env EMBLN_DATADIR; default ~/.embln/<alias>)",
+    )

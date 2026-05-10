@@ -1,3 +1,4 @@
-__all__ = ["LightningNode"]
+__all__ = ["EmblnNode", "EmblnRpc"]
 
-from src.lightning.node import LightningNode
+from src.lightning.node import EmblnNode
+from src.lightning.rpc import EmblnRpc
