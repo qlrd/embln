@@ -70,18 +70,20 @@ def test_lightning_node_logger_is_child_of_wallet(make_ln_node):
     assert alice.logger.parent.name == "alice"
 
 
-# ---- LightningNode lifecycle emits at the right level ----
+# ---- EmblnNode lifecycle emits at the right level ----
 
 
 def test_lightning_node_start_emits_lifecycle_at_info(make_ln_node, caplog):
+    """Lifecycle (alias / color / listen ports / 'started') is logged by the
+    underlying EmblndDaemon under '<alias>.emblnd', not by EmblnNode."""
     alice = make_ln_node("alice")
-    with caplog.at_level(logging.INFO, logger="alice.ln"):
+    with caplog.at_level(logging.INFO, logger="alice.emblnd"):
         alice.start()
         try:
             info_msgs = [
                 r.getMessage()
                 for r in caplog.records
-                if r.name == "alice.ln" and r.levelno == logging.INFO
+                if r.name == "alice.emblnd" and r.levelno == logging.INFO
             ]
         finally:
             alice.stop()
@@ -91,8 +93,9 @@ def test_lightning_node_start_emits_lifecycle_at_info(make_ln_node, caplog):
 
 
 def test_lightning_node_channel_policy_defaults_at_debug(make_ln_node, caplog):
-    """Per-policy-field log lines from `_log_config` should be DEBUG-only —
-    they bloat INFO output while a node is starting."""
+    """Per-policy-field log lines from `EmblnNode.log_policy_defaults`
+    should be DEBUG-only — they'd bloat INFO output. Logged under '<alias>.ln'
+    (the node's own logger) since they describe protocol-level state."""
     alice = make_ln_node("alice")
     with caplog.at_level(logging.DEBUG, logger="alice.ln"):
         alice.start()
@@ -110,12 +113,12 @@ def test_lightning_node_channel_policy_defaults_at_debug(make_ln_node, caplog):
 def test_lightning_node_stop_emits_lifecycle_at_info(make_ln_node, caplog):
     alice = make_ln_node("alice")
     alice.start()
-    with caplog.at_level(logging.INFO, logger="alice.ln"):
+    with caplog.at_level(logging.INFO, logger="alice.emblnd"):
         alice.stop()
     info_msgs = [
         r.getMessage()
         for r in caplog.records
-        if r.name == "alice.ln" and r.levelno == logging.INFO
+        if r.name == "alice.emblnd" and r.levelno == logging.INFO
     ]
     assert "stopping" in info_msgs
     assert "stopped" in info_msgs
@@ -134,18 +137,20 @@ def test_lightning_node_double_stop_is_debug_not_info(make_ln_node, caplog):
     assert not any(r.levelno == logging.INFO for r in records)
 
 
-# ---- LightningNode P2P incoming/outgoing wire events at DEBUG ----
+# ---- EmblnNode P2P incoming/outgoing wire events at DEBUG ----
 
 
 def test_lightning_node_recv_send_logs_at_debug(make_ln_node, caplog):
+    """Wire-level recv/sent events come from EmblndDaemon (the listener),
+    so the records appear under '<alias>.emblnd'."""
     alice = make_ln_node("alice", with_server=True)
     bob = make_ln_node("bob", with_server=True)
-    with caplog.at_level(logging.DEBUG, logger="bob.ln"):
+    with caplog.at_level(logging.DEBUG, logger="bob.emblnd"):
         alice.open_channel(bob, funding_satoshis=100_000_000)
     debug_msgs = [
         r.getMessage()
         for r in caplog.records
-        if r.name == "bob.ln" and r.levelno == logging.DEBUG
+        if r.name == "bob.emblnd" and r.levelno == logging.DEBUG
     ]
     # bob received the open_channel and sent the accept_channel
     assert any("recv msg_type=32" in m for m in debug_msgs)

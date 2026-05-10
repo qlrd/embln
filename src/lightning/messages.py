@@ -1,10 +1,14 @@
-"""BOLT 1/2 message constants and pure parse/build helpers (no LightningNode dep)."""
+"""BOLT 1/2 message constants and pure parse/build helpers (no EmblnNode dep)."""
 
 import os
 
 # message type IDs
 OPEN_CHANNEL_TYPE = 32
 ACCEPT_CHANNEL_TYPE = 33
+# Custom (outside BOLT range 0..160): identifies the connecting peer by alias
+# at the start of a persistent TCP session — the sandbox stand-in for BOLT 1
+# `init` (no Noise transport, no feature bitmasks).
+HANDSHAKE_TYPE = 256
 
 # regtest genesis (display order, matches getblockchaininfo at height 0)
 REGTEST_CHAIN_HASH = bytes.fromhex(
@@ -12,10 +16,12 @@ REGTEST_CHAIN_HASH = bytes.fromhex(
 )
 
 # Mandatory-fields-only message lengths (no TLV). Used by the server-side reader
-# to know how many bytes to consume per type.
+# to know how many bytes to consume per type. HANDSHAKE is 2-byte type + 32-byte
+# right-NUL-padded alias.
 MSG_LENGTH = {
     OPEN_CHANNEL_TYPE: 321,
     ACCEPT_CHANNEL_TYPE: 272,
+    HANDSHAKE_TYPE: 34,
 }
 
 
@@ -25,6 +31,25 @@ def _u(buf: bytes, offset: int, n: int) -> tuple[int, int]:
 
 def _b(buf: bytes, offset: int, n: int) -> tuple[bytes, int]:
     return buf[offset : offset + n], offset + n
+
+
+def build_handshake(alias: str) -> bytes:
+    """HANDSHAKE wire bytes: 2-byte type + 32-byte alias (UTF-8, NUL-padded)."""
+    alias_bytes = alias.encode("utf-8")[:32]
+    padded = alias_bytes + b"\x00" * (32 - len(alias_bytes))
+    return HANDSHAKE_TYPE.to_bytes(2, "big") + padded
+
+
+def parse_handshake(msg: bytes) -> dict:
+    """Decode a HANDSHAKE wire message."""
+    msg_type, off = _u(msg, 0, 2)
+    if msg_type != HANDSHAKE_TYPE:
+        raise ValueError(
+            "expected handshake type %s, got %s" % (HANDSHAKE_TYPE, msg_type)
+        )
+    alias_bytes, _ = _b(msg, off, 32)
+    alias = alias_bytes.rstrip(b"\x00").decode("utf-8", errors="replace")
+    return {"type": msg_type, "alias": alias}
 
 
 def build_open_channel(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -40,15 +65,13 @@ def build_open_channel(  # pylint: disable=too-many-arguments,too-many-positiona
     max_accepted_htlcs: int = 483,
     channel_flags: int = 0,
     chain_hash: bytes = REGTEST_CHAIN_HASH,
-    temporary_channel_id: bytes = None,
 ) -> bytes:
     """BOLT 2 open_channel wire bytes (mandatory fields only, no TLVs).
 
     `max_htlc_value_in_flight_msat` and `channel_reserve_satoshis` default to
     the standard derivations from `funding_satoshis` when not given.
     """
-    if temporary_channel_id is None:
-        temporary_channel_id = os.urandom(32)
+    temporary_channel_id = os.urandom(32)
     if max_htlc_value_in_flight_msat is None:
         max_htlc_value_in_flight_msat = funding_satoshis * 1000
     if channel_reserve_satoshis is None:

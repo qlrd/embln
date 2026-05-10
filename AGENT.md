@@ -24,7 +24,7 @@ Three roles, one wallet seed:
 - `Daemon` (`src/bitcoin/daemon.py`) — bitcoind subprocess lifecycle and an
   `Rpc` client. The chain backend. Keeps `name` (it's a bitcoind instance
   label, not an LN concept).
-- `LightningNode(wallet, daemon=None, port=None, alias=None, color_rgb=None)`
+- `EmblnNode(wallet, daemon=None, port=None, alias=None, color_rgb=None)`
   (`src/lightning/node.py`) — bound to exactly one wallet, optionally one
   daemon. **Two roles in one class:**
   - **RPC *client*** to bitcoind via `self.rpc` (chain access, multisig parity
@@ -39,11 +39,11 @@ Three roles, one wallet seed:
   the funding-tx 2-of-2 P2WSH output, and BOLT 2 message construction.
 
 Do not put channel logic on `WalletManager`. Do not derive on-chain addresses
-through `LightningNode`. The seed is shared; the responsibilities are not.
+through `EmblnNode`. The seed is shared; the responsibilities are not.
 
 ## Channel-policy defaults
 
-Each `LightningNode` carries two override-friendly dicts:
+Each `EmblnNode` carries two override-friendly dicts:
 
 - `self.open_channel_defaults` — every BOLT 2 mandatory policy field
   (funding_satoshis, push_msat, dust_limit_satoshis, htlc_minimum_msat,
@@ -67,7 +67,7 @@ alice.color_rgb = b"\xff\xa5\x00"
 `src/lightning/messages.py` is a **leaf module**: constants + pure
 build/parse helpers (`build_open_channel`, `build_accept_channel`,
 `parse_open_channel`, `parse_accept_channel`). It must **never** import
-`LightningNode` — we hit a circular import doing exactly that. Functions take
+`EmblnNode` — we hit a circular import doing exactly that. Functions take
 primitive arguments (a `basepoints` dict, the parsed peer message) and return
 bytes / dicts. The dependency arrow points `node.py → messages.py`; node
 methods are thin wrappers that pull `self._basepoints(channel_idx)` and
@@ -75,7 +75,7 @@ forward to the leaf.
 
 ## LN P2P transport
 
-`LightningNode.start()` binds a TCP socket on `self.port` (auto-allocated via
+`EmblnNode.start()` binds a TCP socket on `self.port` (auto-allocated via
 `_free_port()` if not passed) and spawns a daemon thread that accepts
 connections and dispatches per BOLT message type:
 
@@ -114,7 +114,7 @@ logging.getLogger("db").setLevel(logging.DEBUG)
 `WalletManager.__init__` is **load-or-create**: if the named row exists, the
 mnemonic and address state are rehydrated; otherwise a fresh 12-word BIP39
 mnemonic is generated from `os.urandom(16)` and persisted.
-`LightningNode.__init__` rehydrates `self.channels` from the same DB.
+`EmblnNode.__init__` rehydrates `self.channels` from the same DB.
 
 `WalletManager.close()` releases the SQLite connection. The `make_wallet`
 fixture calls it on teardown for every cached instance; tests that
@@ -135,7 +135,7 @@ Each instance has a lazy `self.logger` property that wraps `logging.getLogger`:
 - `Daemon.logger` → `getLogger(self.name)` → e.g. `"alice"`.
 - `WalletManager.logger` → `getLogger(self.alias)` — same channel as the
   daemon for the same persona, intentionally.
-- `LightningNode.logger` → `getLogger(f"{self.alias}.ln")` → child logger of
+- `EmblnNode.logger` → `getLogger(f"{self.alias}.ln")` → child logger of
   the wallet's, so adjusting the parent's level cascades.
 - `Rpc.logger` → `getLogger(self._name)` — `Daemon` injects
   `name=f"{self.name}.rpc"` so JSON-RPC traffic logs as e.g. `alice.rpc`.
@@ -374,10 +374,10 @@ are not implemented yet; when added, they go in `embln-cli` and talk to
 
 ## Cleanup safety nets
 
-Both `Daemon` and `LightningNode` keep a class-level
+Both `Daemon` and `EmblnNode` keep a class-level
 `weakref.WeakSet[_instances]`; `__init__` registers `self`. Class
 methods `Daemon.stop_all_running()` and
-`LightningNode.stop_all_listeners()` walk the registry and stop
+`EmblnNode.stop_all_listeners()` walk the registry and stop
 anything still alive. `tests/conftest.py` registers both via
 `atexit.register(...)` so a Ctrl-C'd test session still reaps its
 bitcoind subprocesses and LN listener sockets.
@@ -420,10 +420,10 @@ Other cleanup invariants:
   color formatter; per-file basicConfig is a no-op at best, an inconsistency
   at worst).
 - Hardcoded ports for daemons or LN listeners (use `_free_port()`).
-- Conflating `derive_funding_pubkey` (`LightningNode`, family 0) with on-chain
+- Conflating `derive_funding_pubkey` (`EmblnNode`, family 0) with on-chain
   receive addresses (`WalletManager.create_new_address`, BIP84). They live on
   different sub-trees on purpose.
-- Importing `LightningNode` from `messages.py`. The leaf direction is
+- Importing `EmblnNode` from `messages.py`. The leaf direction is
   enforced; reversing it produces a circular import at collection time.
 - `r["error"]` in any RPC dispatch path — use `r.get("error")`.
 
@@ -434,7 +434,7 @@ Other cleanup invariants:
 bypass with `--no-verify`; if a hook fires legitimately, fix the
 underlying issue.
 
-**Naming.** Classes `PascalCase` (`WalletManager`, `LightningNode`).
+**Naming.** Classes `PascalCase` (`WalletManager`, `EmblnNode`).
 Functions and methods `snake_case`. Module-level constants `UPPER_SNAKE`
 (`OP_2`, `_FAMILY_MULTISIG`). Module-private prefixed with `_`
 (`_FAMILY_*`, `_REGTEST_CHAIN_HASH`, `_free_port`). Internal-only helpers
@@ -474,10 +474,10 @@ message.
 **Logging.**
 - Components: lazy `self.logger` property, named after the instance.
   `Daemon` uses `self.name`; `WalletManager` uses `self.alias`;
-  `LightningNode` uses `f"{self.alias}.ln"` for child-logger inheritance.
+  `EmblnNode` uses `f"{self.alias}.ln"` for child-logger inheritance.
 - `Db` uses module-level `logging.getLogger("db")` and emits **DEBUG** on
   every operation. INFO and above stay quiet by default.
-- `LightningNode.start()` and `stop()` each emit a config dump / lifecycle
+- `EmblnNode.start()` and `stop()` each emit a config dump / lifecycle
   trail (start: `alias=`, `color_rgb=`, `listen=`, all `open_channel.*` and
   `accept_channel.*` defaults; stop: `stopping`, errors on socket close,
   warnings on slow thread join, `stopped`).
